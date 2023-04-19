@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:codigo6_maps/utils/map_style.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 
@@ -101,54 +103,166 @@ class _HomePageState extends State<HomePage> {
     return myBytes;
   }
 
+  // Set<Polyline> myPolylines = {
+  //   Polyline(
+  //     polylineId: PolylineId("ruta1"),
+  //     color: Colors.red,
+  //     points: [
+  //       LatLng(-8.113383, -79.005816),
+  //       LatLng(-8.113689, -79.005787),
+  //     ],
+  //   ),
+  // };
+
+  Set<Polyline> myPolylines = {};
+  List<LatLng> _points = [];
+  StreamSubscription<Position>? positionStreamSubscription;
+
+  late GoogleMapController googleMapController;
+
+  getCurrentPosition() async {
+    // Position position = await Geolocator.getCurrentPosition();
+    // print(position);
+    // Geolocator.getPositionStream().listen(
+    //   (event) {
+    //     print(event);
+    //   },
+    // );
+    Polyline route1 = Polyline(
+      polylineId: PolylineId("route1"),
+      color: Colors.deepPurple,
+      width: 3,
+      points: _points,
+    );
+    myPolylines.add(route1);
+
+    BitmapDescriptor myIcon = BitmapDescriptor.fromBytes(
+      await getImageMarkerBytes(
+        "https://freesvg.org/img/car_topview.png",
+        fromInternet: true,
+      ),
+    );
+
+    Position? positionTemp;
+    positionStreamSubscription = Geolocator.getPositionStream().listen(
+      (event) {
+        LatLng point = LatLng(event.latitude, event.longitude);
+        _points.add(point);
+
+        double rotation = 0;
+
+        if (positionTemp != null) {
+          rotation = Geolocator.bearingBetween(
+            positionTemp!.latitude,
+            positionTemp!.longitude,
+            event.latitude,
+            event.longitude,
+          );
+        }
+
+        Marker indicator = Marker(
+          markerId: MarkerId("IndicatorPosition"),
+          position: point,
+          icon: myIcon,
+          rotation: rotation,
+        );
+        myMarkers.add(indicator);
+
+        CameraUpdate cameraUpdate = CameraUpdate.newLatLng(point);
+        googleMapController.animateCamera(cameraUpdate);
+
+        positionTemp = event;
+        setState(() {});
+      },
+    );
+  }
+
+  Future<LatLng> getCurrentPositionInitial() async {
+    Position position = await Geolocator.getCurrentPosition();
+    return LatLng(position.latitude, position.longitude);
+  }
+
   @override
   void initState() {
     // TODO: implement initState
     super.initState();
     getData();
+    getCurrentPosition();
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+    positionStreamSubscription!.cancel();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: GoogleMap(
-        initialCameraPosition: CameraPosition(
-          target: LatLng(-8.113920, -79.005788),
-          zoom: 18,
-        ),
-        compassEnabled: true, //funciona con el gps
-        myLocationEnabled: true, //funciona con el gps
-        myLocationButtonEnabled: true, //funciona con el gps
-        mapType: MapType.normal, //tipo de mapa que se va a visualizar
-        onMapCreated: (GoogleMapController controller) {
-          controller.setMapStyle(json.encode(mapStyle));
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          CameraUpdate cameraUpdate =
+              CameraUpdate.newLatLng(await getCurrentPositionInitial());
+          googleMapController.animateCamera(cameraUpdate);
         },
-        zoomControlsEnabled: true,
-        zoomGesturesEnabled: true,
-        markers: myMarkers,
-        onTap: (LatLng position) async {
-          Marker marker = Marker(
-            markerId: MarkerId(myMarkers.length.toString()),
-            position: position,
-            //icon: BitmapDescriptor.defaultMarkerWithHue(
-            //    BitmapDescriptor.hueGreen),
-            // icon: await BitmapDescriptor.fromAssetImage(
-            //   ImageConfiguration(),
-            //   "assets/images/location.png",
-            // ),
-            //icon: BitmapDescriptor.fromBytes(await getImageMarkerBytes("assets/images/location.png")),
-            icon: BitmapDescriptor.fromBytes(await getImageMarkerBytes(
-                "https://cdn-icons-png.flaticon.com/512/1673/1673221.png",
-                fromInternet: true)),
-            rotation: 0,
-            draggable: true, //Marcador puede o no ser arrastrado
-            onDrag: (LatLng newPosition) {
-              //Propiedad que controla lo que sucede cuando se arrastra
-              print(newPosition);
-            },
-          );
-          myMarkers.add(marker);
-          setState(() {});
+        child: Icon(Icons.location_on),
+      ),
+      body: FutureBuilder(
+        future: getCurrentPositionInitial(),
+        builder: (BuildContext context, AsyncSnapshot snap) {
+          if (snap.hasData) {
+            return GoogleMap(
+              initialCameraPosition: CameraPosition(
+                target: snap.data,
+                zoom: 18,
+              ),
+              compassEnabled: true, //funciona con el gps
+              myLocationEnabled:
+                  false, //funciona con el gps, muestra punto azul de ubicacion
+              myLocationButtonEnabled: true, //funciona con el gps
+
+              mapType: MapType.normal, //tipo de mapa que se va a visualizar
+              onMapCreated: (GoogleMapController controller) {
+                googleMapController = controller;
+                googleMapController.setMapStyle(json.encode(mapStyle));
+              },
+              zoomControlsEnabled: true, // iconos para zoom
+              zoomGesturesEnabled: true,
+              mapToolbarEnabled: false, // iconos de google maps y rutas
+              markers: myMarkers,
+              polylines: myPolylines,
+              onTap: (LatLng position) async {
+                Marker marker = Marker(
+                  markerId: MarkerId(myMarkers.length.toString()),
+                  position: position,
+                  //icon: BitmapDescriptor.defaultMarkerWithHue(
+                  //    BitmapDescriptor.hueGreen),
+                  // icon: await BitmapDescriptor.fromAssetImage(
+                  //   ImageConfiguration(),
+                  //   "assets/images/location.png",
+                  // ),
+                  //icon: BitmapDescriptor.fromBytes(await getImageMarkerBytes("assets/images/location.png")),
+                  icon: BitmapDescriptor.fromBytes(
+                    await getImageMarkerBytes(
+                      "https://cdn-icons-png.flaticon.com/512/1673/1673221.png",
+                      fromInternet: true,
+                      width: 140,
+                    ),
+                  ),
+                  rotation: 0,
+                  draggable: true, //Marcador puede o no ser arrastrado
+                  onDrag: (LatLng newPosition) {
+                    //Propiedad que controla lo que sucede cuando se arrastra
+                    print(newPosition);
+                  },
+                );
+                myMarkers.add(marker);
+                setState(() {});
+              },
+            );
+          } else {
+            return CircularProgressIndicator();
+          }
         },
       ),
     );
